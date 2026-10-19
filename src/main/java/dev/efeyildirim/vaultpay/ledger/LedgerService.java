@@ -76,4 +76,25 @@ public class LedgerService {
     public List<Posting> postingsOf(UUID journalEntryId) {
         return postings.findByJournalEntryId(journalEntryId);
     }
+
+    /** Outgoing transfers from an account since {@code since}: how many, and how much in total. */
+    public record OutgoingTransfers(long count, long totalMinor) {
+    }
+
+    @Transactional(readOnly = true)
+    public OutgoingTransfers outgoingTransfersSince(UUID accountId, Instant since) {
+        return new OutgoingTransfers(
+                postings.countDebitsSince(accountId, JournalEntryType.TRANSFER, since),
+                postings.sumDebitsSince(accountId, JournalEntryType.TRANSFER, since));
+    }
+
+    @Transactional(readOnly = true)
+    public long depositedSince(UUID accountId, Instant since) {
+        return postings.sumCreditsSince(accountId, JournalEntryType.DEPOSIT, since);
+    }
+
+    @Transactional(readOnly = true)
+    public boolean hasTransferredBefore(UUID fromAccountId, UUID toAccountId) {
+        return postings.countMovements(fromAccountId, toAccountId) > 0;
+    }
 }

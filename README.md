@@ -19,7 +19,8 @@ a double-entry ledger, ACID money movement, concurrency safety, idempotent APIs 
 | Idempotency keys on every money-moving endpoint | Built and tested |
 | Audit log written atomically with each change | Built |
 | Flyway migrations, PostgreSQL in production/CI, H2 for local dev | Built |
-| Rule-based fraud scoring | Planned (schema exists, rules not yet implemented) |
+| Rule-based fraud scoring on transfers (4 explainable rules, 0-100 score, ALLOW / REVIEW / BLOCK) | Built and tested |
+| Review queue / case handling for REVIEW decisions | Planned (REVIEW is recorded, nobody works it yet) |
 | Redis rate limiting | Planned |
 | Web dashboard (React / Next.js) | Planned |
 
@@ -34,6 +35,7 @@ account   accounts, row locking (SELECT ... FOR UPDATE in id order)
 ledger    journal entries + postings; the only code allowed to write money movements
 payment   deposits and transfers, idempotency handling
 audit     append-only audit log, joined to the caller's transaction
+fraud     rule-based transfer scoring; pure rules over facts read from the ledger
 ```
 
 ### Data model
@@ -41,7 +43,7 @@ audit     append-only audit log, joined to the caller's transaction
 ```
 users ──< accounts ──< postings >── journal_entries
                                         │
-                 audit_log, fraud_assessments (planned)
+                 audit_log, fraud_assessments
 ```
 
 - **`accounts` has no balance column.** A balance is always `SUM(postings.amount_minor)` for that account,
@@ -67,7 +69,36 @@ All steps run in one database transaction (`@Transactional`):
    sees its result instead of racing it.
 3. Check ownership, account status, currency and balance. The row lock means no other transaction can
    post against the source account between this check and the write: no lost updates, no double spend.
-4. Write the journal entry, its two postings and an audit row, then commit.
+4. Score fraud risk (see below), still under the same locks. `BLOCK` → `422`, nothing is posted.
+5. Write the journal entry, its two postings, the fraud assessment and an audit row, then commit.
+
+### Fraud scoring
+
+Every transfer that passes the banking checks is scored by a small set of rules. Each rule is a pure
+function over a `TransferFacts` value (gathered once from the ledger), adds fixed points when it fires,
+and leaves a reason code on the stored assessment, so every decision can be explained afterwards.
+
+| Rule | Fires when | Points |
+|---|---|---|
+| `LARGE_AMOUNT` | ≥ 5× the account's average transfer over 90 days (needs ≥ 3 transfers); with less history ≥ £1,000. Never under £100 | 40 |
+| `HIGH_VELOCITY` | the source account already made ≥ 5 transfers in the last 10 minutes | 30 |
+| `DEPOSIT_THEN_TRANSFER` | deposits arrived in the last 30 minutes and ≥ half of that leaves to another customer | 25 |
+| `NEW_PAYEE` | first transfer from this account to another customer's account | 20 |
+
+Score = sum of points, capped at 100. **0-39 ALLOW**, **40-69 REVIEW** (goes through, flagged), **70+ BLOCK**.
+No single rule can block on its own; e.g. "£2,000 deposited, £1,900 sent at once to a new payee" scores 85.
+
+- `ALLOW` / `REVIEW` assessments are saved **in the transfer's transaction** and point at its journal entry,
+  so they exist if and only if the transfer committed.
+- A `BLOCK` throws, which rolls the transfer's transaction back. The assessment and a `TRANSFER_BLOCKED`
+  audit row are therefore written with **`REQUIRES_NEW`**: Spring suspends the outer transaction and commits
+  this record in its own one, so the evidence of a blocked attempt survives the rollback. The cost is a
+  second database connection for a moment while the account locks are held.
+- The client gets `422` with an `assessmentId`, but not the reasons: telling a fraudster which rule fired
+  shows them how to stay under it.
+
+Limits, honestly: thresholds are hard-coded constants, not tuned on real data; there is no machine learning,
+no device/IP signals and no review workflow yet. A retried blocked request is scored (and recorded) again.
 
 ## API
 
@@ -112,8 +143,10 @@ What the tests prove:
 - **Idempotent retries:** a sequential retry and a burst of 10 concurrent requests with the same key move
   money exactly once. A reused key with a different body is rejected.
 - **Ledger invariant:** after every test, every journal entry sums to zero and so does the whole ledger.
+- **Fraud rules:** each rule has unit tests at its boundaries; integration tests show a blocked transfer
+  moves no money while its assessment survives the rollback, and that a known payee lowers the next score.
 - **End-to-end HTTP flow:** register → login → open two accounts → deposit → transfer → replay, plus
-  401/404/422/400 cases.
+  401/404/422/400 cases and a fraud-blocked transfer (`422` with an assessment id).
 
 ## Tech stack
 

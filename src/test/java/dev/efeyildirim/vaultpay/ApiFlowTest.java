@@ -69,6 +69,23 @@ class ApiFlowTest extends IntegrationTest {
     }
 
     @Test
+    void fraudBlockedTransferReturns422WithAssessmentIdButNoReasons() throws Exception {
+        String aliceToken = registerAndLogin();
+        String bobToken = registerAndLogin();
+        String alice = openAccountOverHttp(aliceToken, "Alice");
+        String bob = openAccountOverHttp(bobToken, "Bob");
+        postJson("/api/accounts/" + alice + "/deposits", aliceToken, newKey(), "{\"amountMinor\": 200000}")
+                .andExpect(status().isCreated());
+
+        postJson("/api/transfers", aliceToken, newKey(), """
+                {"fromAccountId": "%s", "toAccountId": "%s", "amountMinor": 190000}""".formatted(alice, bob))
+                .andExpect(status().isUnprocessableEntity())
+                .andExpect(jsonPath("$.detail").value("Transfer blocked by fraud screening"))
+                .andExpect(jsonPath("$.assessmentId").isNotEmpty())
+                .andExpect(jsonPath("$.reasons").doesNotExist());
+    }
+
+    @Test
     void requestsWithoutTokenAreRejected() throws Exception {
         mvc.perform(get("/api/accounts")).andExpect(status().isUnauthorized());
         mvc.perform(post("/api/transfers").contentType(MediaType.APPLICATION_JSON).content("{}"))

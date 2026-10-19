@@ -1,6 +1,7 @@
 package dev.efeyildirim.vaultpay.common;
 
 import dev.efeyildirim.vaultpay.auth.InvalidCredentialsException;
+import dev.efeyildirim.vaultpay.fraud.TransferBlockedException;
 import dev.efeyildirim.vaultpay.ledger.InsufficientFundsException;
 import dev.efeyildirim.vaultpay.payment.IdempotencyConflictException;
 import org.springframework.http.HttpStatus;
@@ -26,6 +27,14 @@ public class ApiExceptionHandler extends ResponseEntityExceptionHandler {
     @ExceptionHandler({InsufficientFundsException.class, BusinessRuleException.class})
     ProblemDetail unprocessable(RuntimeException e) {
         return ProblemDetail.forStatusAndDetail(HttpStatus.UNPROCESSABLE_ENTITY, e.getMessage());
+    }
+
+    /** 422 like other rule violations; the assessment id lets support look the decision up. */
+    @ExceptionHandler(TransferBlockedException.class)
+    ProblemDetail blocked(TransferBlockedException e) {
+        ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.UNPROCESSABLE_ENTITY, e.getMessage());
+        problem.setProperty("assessmentId", e.getAssessmentId());
+        return problem;
     }
 
     @ExceptionHandler(InvalidCredentialsException.class)
