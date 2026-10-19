@@ -1,14 +1,29 @@
 # VaultPay
 
-**A secure digital banking simulator in Java 21 + Spring Boot 4.**
-VaultPay is a portfolio project that explores the backend problems real payment systems have to solve:
-a double-entry ledger, ACID money movement, concurrency safety, idempotent APIs and an audit trail.
+[![CI](https://github.com/efeyildirim01/vaultpay/actions/workflows/ci.yml/badge.svg)](https://github.com/efeyildirim01/vaultpay/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-**Live demo:** https://vaultpay-7sxx.onrender.com (free tier: the first request after a quiet period takes about a
-minute while the service wakes up). Register with any email; please don't use a real password.
+A secure digital banking simulator: virtual accounts, transfers and transaction history on a **double-entry ledger**,
+with ACID money movement that stays correct under concurrency, idempotent payment APIs, rule-based fraud scoring
+with a human review queue, an append-only audit log and a back-office admin panel.
+
+**Java 21 · Spring Boot 4 · Spring Security (JWT) · JPA/Hibernate · Flyway · PostgreSQL · Redis · React · TypeScript · Testcontainers · Docker**
+
+**Live demo: https://vaultpay-7sxx.onrender.com** · register with any e-mail address (please don't reuse a real
+password). It runs on a free plan: the first visit after a quiet period can take about a minute while the service
+starts.
 
 > **Simulator only.** No real money moves and nothing connects to a bank or card network.
 > Deposits are simulated: they are funded from an internal "External funding (simulated)" system account.
+
+![Accounts and transaction history](docs/screenshots/accounts.png)
+
+| | |
+|---|---|
+| ![Fraud review queue](docs/screenshots/fraud-review.png) | ![Admin panel](docs/screenshots/admin.png) |
+| **Fraud review:** transfers scored REVIEW with the rules that fired; *Confirm fraud* freezes the sending account | **Admin panel:** live overview (incl. a ledger-balance check) and the append-only audit log |
+
+Screenshots use simulated demo data on a local instance.
 
 ## Status
 
