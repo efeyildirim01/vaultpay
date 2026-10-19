@@ -4,6 +4,9 @@
 VaultPay is a portfolio project that explores the backend problems real payment systems have to solve:
 a double-entry ledger, ACID money movement, concurrency safety, idempotent APIs and an audit trail.
 
+**Live demo:** https://vaultpay-7sxx.onrender.com (free tier: the first request after a quiet period takes about a
+minute while the service wakes up). Register with any email; please don't use a real password.
+
 > **Simulator only.** No real money moves and nothing connects to a bank or card network.
 > Deposits are simulated: they are funded from an internal "External funding (simulated)" system account.
 
