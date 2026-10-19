@@ -5,6 +5,8 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Slice;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
@@ -75,6 +77,22 @@ public class LedgerService {
     @Transactional(readOnly = true)
     public List<Posting> postingsOf(UUID journalEntryId) {
         return postings.findByJournalEntryId(journalEntryId);
+    }
+
+    /** The double-entry invariant: every journal entry, and so the whole ledger, sums to zero. */
+    @Transactional(readOnly = true)
+    public boolean isBalanced() {
+        return postings.findUnbalancedJournalEntries().isEmpty() && postings.sumOfAllPostings() == 0;
+    }
+
+    @Transactional(readOnly = true)
+    public long journalEntryCount() {
+        return journalEntries.count();
+    }
+
+    @Transactional(readOnly = true)
+    public Slice<LedgerLine> statement(UUID accountId, int page, int size) {
+        return postings.statement(accountId, PageRequest.of(page, size));
     }
 
     /** Outgoing transfers from an account since {@code since}: how many, and how much in total. */

@@ -1,5 +1,6 @@
 import { FormEvent, useCallback, useEffect, useState } from 'react';
 import { AccountView, ApiError, api, describeError } from './api';
+import { HistoryPanel } from './HistoryPanel';
 import { useIdempotencyKey } from './idempotency';
 import { formatPence, parsePounds } from './money';
 
@@ -8,6 +9,7 @@ type Props = { token: string; onExpired: () => void };
 export function AccountsPage({ token, onExpired }: Props) {
   const [accounts, setAccounts] = useState<AccountView[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [historyId, setHistoryId] = useState<string | null>(null);
 
   const reload = useCallback(async () => {
     try {
@@ -28,7 +30,7 @@ export function AccountsPage({ token, onExpired }: Props) {
         {error && <p className="error">{error}</p>}
         {accounts.length === 0 ? <p className="muted">No accounts yet. Open one to get started.</p> : (
           <table>
-            <thead><tr><th>Name</th><th>Account id</th><th>Status</th><th className="num">Balance</th></tr></thead>
+            <thead><tr><th>Name</th><th>Account id</th><th>Status</th><th className="num">Balance</th><th /></tr></thead>
             <tbody>
               {accounts.map(a => (
                 <tr key={a.id}>
@@ -36,6 +38,11 @@ export function AccountsPage({ token, onExpired }: Props) {
                   <td><code className="id" title="Share this id to receive transfers">{a.id}</code></td>
                   <td><span className={`status ${a.status.toLowerCase()}`}>{a.status}</span></td>
                   <td className="num">{formatPence(a.balanceMinor)}</td>
+                  <td>
+                    <button className="link" onClick={() => setHistoryId(historyId === a.id ? null : a.id)}>
+                      {historyId === a.id ? 'Hide history' : 'History'}
+                    </button>
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -43,6 +50,11 @@ export function AccountsPage({ token, onExpired }: Props) {
         )}
         <OpenAccountForm token={token} onDone={reload} />
       </section>
+      {historyId && (
+        <HistoryPanel token={token} account={accounts.find(a => a.id === historyId)} ownAccounts={accounts}
+                      refreshKey={accounts}
+                      onExpired={onExpired} />
+      )}
       <DepositForm token={token} accounts={accounts} onDone={reload} />
       <TransferForm token={token} accounts={accounts} onDone={reload} />
     </div>

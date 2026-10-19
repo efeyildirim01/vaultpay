@@ -39,6 +39,45 @@ export type PendingReview = {
 
 export type ReviewOutcome = 'CLEARED' | 'CONFIRMED_FRAUD';
 
+/** One row of an account statement; amountMinor is negative for money out. */
+export type TransactionView = {
+  journalEntryId: string;
+  type: 'DEPOSIT' | 'TRANSFER';
+  amountMinor: number;
+  currency: string;
+  counterpartyAccountId: string;
+  counterpartyLabel: string | null;
+  reference: string | null;
+  createdAt: string;
+};
+
+export type Slice<T> = { items: T[]; page: number; size: number; hasMore: boolean };
+
+export type AdminOverview = {
+  users: number;
+  customerAccounts: number;
+  frozenAccounts: number;
+  journalEntries: number;
+  customerMoneyMinor: number;
+  flaggedForReview: number;
+  pendingReviews: number;
+  blockedTransfers: number;
+  ledgerBalanced: boolean;
+};
+
+export type AuditView = {
+  id: string;
+  createdAt: string;
+  actorId: string | null;
+  actorEmail: string | null;
+  action: string;
+  entityType: string;
+  entityId: string | null;
+  details: string | null;
+};
+
+export type AuditPage = Slice<AuditView> & { actions: string[] };
+
 type Options = { method?: string; token?: string; body?: unknown; idempotencyKey?: string };
 
 async function request<T>(path: string, { method = 'GET', token, body, idempotencyKey }: Options = {}): Promise<T> {
@@ -84,6 +123,15 @@ export const api = {
       method: 'POST', token, idempotencyKey: key,
       body: { fromAccountId, toAccountId, amountMinor, reference: reference || null },
     }),
+
+  transactions: (token: string, accountId: string, page: number) =>
+    request<Slice<TransactionView>>(`/api/accounts/${accountId}/transactions?page=${page}&size=20`, { token }),
+
+  adminOverview: (token: string) => request<AdminOverview>('/api/admin/overview', { token }),
+
+  adminAudit: (token: string, action: string, page: number) =>
+    request<AuditPage>(`/api/admin/audit?page=${page}&size=50${action ? `&action=${encodeURIComponent(action)}` : ''}`,
+                       { token }),
 
   pendingReviews: (token: string) => request<PendingReview[]>('/api/fraud/reviews/pending', { token }),
 

@@ -49,9 +49,14 @@ public class UserService {
      */
     @Transactional
     public void promoteToReviewer(UUID actorId, UUID userId) {
+        grantRole(actorId, userId, UserRole.REVIEWER);
+    }
+
+    @Transactional
+    public void grantRole(UUID actorId, UUID userId, UserRole role) {
         User user = users.findById(userId).orElseThrow(() -> new NotFoundException("User not found"));
-        user.promoteToReviewer();
-        audit.record(actorId, "ROLE_GRANTED", "USER", userId, "role=" + UserRole.REVIEWER);
+        user.changeRole(role);
+        audit.record(actorId, "ROLE_GRANTED", "USER", userId, "role=" + role);
     }
 
     public static String normaliseEmail(String email) {

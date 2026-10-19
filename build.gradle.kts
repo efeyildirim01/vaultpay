@@ -54,3 +54,8 @@ tasks.withType<Test> {
 		exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL
 	}
 }
+
+// Fixed name so the Dockerfile can copy the jar without knowing the version.
+tasks.bootJar {
+	archiveFileName = "vaultpay.jar"
+}

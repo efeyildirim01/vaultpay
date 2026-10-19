@@ -3,6 +3,8 @@ package dev.efeyildirim.vaultpay.ledger;
 import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Slice;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
@@ -41,6 +43,20 @@ public interface PostingRepository extends JpaRepository<Posting, UUID> {
             where p.accountId = :accountId and p.amountMinor > 0 and j.type = :type and p.createdAt >= :since""")
     long sumCreditsSince(@Param("accountId") UUID accountId, @Param("type") JournalEntryType type,
                          @Param("since") Instant since);
+
+    /**
+     * An account's statement, newest first. Every journal entry today has exactly two legs, so joining the
+     * other leg of the same entry gives one row per posting with its counterparty.
+     */
+    @Query("""
+            select new dev.efeyildirim.vaultpay.ledger.LedgerLine(
+                       j.id, j.type, p.amountMinor, p.currency, c.accountId, j.reference, p.createdAt)
+            from Posting p
+            join JournalEntry j on j.id = p.journalEntryId
+            join Posting c on c.journalEntryId = p.journalEntryId and c.accountId <> p.accountId
+            where p.accountId = :accountId
+            order by p.createdAt desc, j.id desc""")
+    Slice<LedgerLine> statement(@Param("accountId") UUID accountId, Pageable pageable);
 
     /** Number of journal entries that debited {@code from} and credited {@code to}. */
     @Query("""

@@ -22,7 +22,11 @@ a double-entry ledger, ACID money movement, concurrency safety, idempotent APIs 
 | Rule-based fraud scoring on transfers (4 explainable rules, 0-100 score, ALLOW / REVIEW / BLOCK) | Built and tested |
 | Fraud review queue: reviewer role, four-eyes rule, confirmed fraud freezes the account | Built and tested |
 | Rate limiting: login per IP, money movement per user; Redis in production, in-memory locally | Built and tested (Redis store tested in CI only) |
-| Web dashboard (React + TypeScript + Vite): accounts, deposits, transfers, fraud review queue | Built (unit tests for money parsing; UI flows checked by hand) |
+| Transaction history per account (paged statement with counterparty) | Built and tested |
+| Admin panel: system overview (incl. live ledger-balance check) and filterable audit log; `ADMIN` role | Built and tested |
+| Security test suite: forged / expired / tampered / `alg:none` tokens, role escalation, header and error hygiene | Built |
+| Web dashboard (React + TypeScript + Vite): accounts, history, deposits, transfers, fraud review, admin panel | Built (unit tests for money parsing; UI flows checked by hand) |
+| Docker image (dashboard served by the Spring Boot jar), docker compose stack, Render blueprint | Built; image + full-stack smoke test run in CI |
 
 ## Architecture
 
@@ -37,6 +41,7 @@ payment   deposits and transfers, idempotency handling
 audit     append-only audit log, joined to the caller's transaction
 fraud     rule-based transfer scoring; pure rules over facts read from the ledger; reviewer queue
 ratelimit fixed-window limits on login and money movement (Redis or in-memory counters)
+admin     read-only back-office views: overview counters and the audit log
 ```
 
 ### Data model
@@ -109,8 +114,10 @@ No single rule can block on its own; e.g. "£2,000 deposited, £1,900 sent at on
 - Decisions go to an append-only `fraud_reviews` table instead of overwriting the assessment, so the automated
   decision and the human one are both kept. `UNIQUE (assessment_id)` means two reviewers deciding at the same
   moment cannot both win: the loser gets `409` (tested with two concurrent reviewers).
-- The `dev` profile creates `reviewer@vaultpay.local` / `dev-reviewer-password` at startup so the queue can be
-  tried locally. There is no endpoint that grants the role.
+- Users with the `ADMIN` role get both `fraud:review` and `audit:read`, so they can also work the queue.
+- Staff accounts are created at startup when `vaultpay.staff.password` is set (always in `dev`, opt-in elsewhere
+  via `VAULTPAY_STAFF_PASSWORD`): `reviewer@vaultpay.local` and `admin@vaultpay.local`. There is no endpoint
+  that grants a role.
 
 Limits, honestly: thresholds are hard-coded constants, not tuned on real data; there is no machine learning and
 no device/IP signals. Confirmed fraud only freezes the account: money is not clawed back, and there is no unfreeze
@@ -139,6 +146,30 @@ so nothing is posted. The login limit counts wrong passwords too, which is what 
 - The client IP is `getRemoteAddr()`. Behind a load balancer this must be switched to a header set by a
   trusted proxy; `X-Forwarded-For` from the client is not trusted.
 
+### Transaction history and admin panel
+
+- `GET /api/accounts/{id}/transactions` returns the account's postings newest first, each joined with the other
+  leg of its journal entry, so every row shows the counterparty. Paging uses a Spring Data `Slice`: it fetches one
+  row more than the page size to know whether there is another page, instead of a `COUNT(*)` over the history.
+- `/api/admin/**` requires the `audit:read` scope (`ADMIN` only). The overview shows users, accounts, frozen
+  accounts, journal entries, money held by customers (by double entry: minus the external funding account's
+  balance), fraud counts, and whether the ledger is balanced right now. The audit log is filterable by action
+  and shows the actor's email. Both are read-only.
+
+### Security
+
+- Passwords: BCrypt via Spring's delegating encoder (`{bcrypt}` prefix allows upgrading the algorithm later);
+  minimum 12 characters; never returned by the API. Unknown email and wrong password give the same `401`, and
+  both paths run a BCrypt comparison so they take similar time.
+- Tokens: HS256 JWTs, 30 minutes, signed with a secret from the environment (≥ 32 bytes, checked at startup).
+  The decoder accepts only HS256, checks expiry and requires `iss = vaultpay`.
+- Authorisation: roles become OAuth2 scopes in the token (`fraud:review`, `audit:read`); URL rules in
+  `SecurityConfig` enforce them. Other users' accounts return `404`, not `403`, so ids cannot be probed.
+- Only `/actuator/health` and `/actuator/info` are exposed.
+- `SecurityTest` attacks all of this: expired tokens, tokens signed with another key (even carrying admin
+  scopes), a tampered payload, `alg: none`, a foreign issuer, role fields smuggled into sign-up, staff endpoints
+  called by customers, internal actuator endpoints, SQL-injection-shaped logins, and stack traces in errors.
+
 ## API
 
 | Method | Path | Notes |
@@ -148,10 +179,13 @@ so nothing is posted. The login limit counts wrong passwords too, which is what 
 | `POST` | `/api/accounts` | `{name, currency: "GBP"}` |
 | `GET` | `/api/accounts` | your accounts with balances |
 | `GET` | `/api/accounts/{id}` | one account with its balance |
+| `GET` | `/api/accounts/{id}/transactions?page=&size=` | statement, newest first: `{items, page, size, hasMore}` |
 | `POST` | `/api/accounts/{id}/deposits` | simulated deposit, needs `Idempotency-Key` |
 | `POST` | `/api/transfers` | `{fromAccountId, toAccountId, amountMinor, reference}`, needs `Idempotency-Key` |
 | `GET` | `/api/fraud/reviews/pending` | reviewers only: unreviewed `REVIEW` assessments with reasons and transfer details |
 | `POST` | `/api/fraud/assessments/{id}/review` | reviewers only: `{outcome: CLEARED \| CONFIRMED_FRAUD, note}` |
+| `GET` | `/api/admin/overview` | admins only: counters and ledger-balance check |
+| `GET` | `/api/admin/audit?action=&page=&size=` | admins only: audit log, newest first, with the list of actions |
 
 Errors use RFC 9457 problem details (`application/problem+json`). Accounts belonging to other users
 return `404`, so account ids cannot be probed.
@@ -160,10 +194,12 @@ return `404`, so account ids cannot be probed.
 
 [`web/`](web) is a small React + TypeScript single-page app built with Vite. It talks only to the REST API above.
 
-- **Customers:** sign up / sign in, open accounts, see balances, make simulated deposits and transfers.
+- **Customers:** sign up / sign in, open accounts, see balances and each account's history, make simulated
+  deposits and transfers.
   Fraud blocks (`422`), frozen accounts and rate limits (`429`, with the wait time) are shown as messages.
 - **Reviewers:** a *Fraud review* tab (shown only when the token has the `fraud:review` scope) lists the queue
   with score and reasons, and has *Clear* / *Confirm fraud* buttons. The server still checks the scope on every call.
+- **Admins:** an *Admin* tab with the system overview and the audit log.
 - **Idempotency from the UI:** each form keeps one `Idempotency-Key` until its content changes or the request
   succeeds, so pressing *Send* again after a timeout retries the same request instead of sending money twice.
 - **Money input** is parsed as text into integer pence (`"12.30"` → `1230`), never through floating point.
@@ -186,7 +222,27 @@ npm install
 npm run dev        # http://localhost:5173, forwards /api to the backend on :8080
 ```
 
-The `dev` profile creates a reviewer account, `reviewer@vaultpay.local` / `dev-reviewer-password`.
+The `dev` profile creates two staff accounts with the password `dev-staff-password`:
+`reviewer@vaultpay.local` (fraud review) and `admin@vaultpay.local` (fraud review + admin panel).
+
+### With Docker
+
+```bash
+docker compose up --build   # app + PostgreSQL 16 + Redis 7, dashboard and API on http://localhost:8080
+```
+
+The image builds the dashboard and puts it inside the Spring Boot jar, so one container serves both.
+Staff password in the compose file: `local-staff-password`.
+
+## Deployment (Render)
+
+[`render.yaml`](render.yaml) is a Render Blueprint: a Docker web service, a PostgreSQL database and a Key Value
+(Redis) instance, wired together with environment variables; the JWT secret is generated by Render.
+In the Render dashboard: **New → Blueprint →** this repository. Set `VAULTPAY_STAFF_PASSWORD` if the demo should
+have the reviewer and admin accounts.
+
+Free-tier caveats: the service sleeps when idle (first request takes ~1 minute), and the free database expires
+after 30 days. [`scripts/smoke-test.sh`](scripts/smoke-test.sh) `<url> <staff-password>` checks a deployment end to end.
 
 ## Tests
 
@@ -195,7 +251,8 @@ The `dev` profile creates a reviewer account, `reviewer@vaultpay.local` / `dev-r
 ./gradlew test -PtestDb=postgres # same suite on real PostgreSQL 16 + Redis 7 via Testcontainers (needs Docker)
 ```
 
-CI runs both variants, plus the dashboard's unit tests and type-checked build, on every push ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)).
+CI runs both variants, the dashboard's unit tests and type-checked build, and builds the Docker image, starts
+the whole stack with docker compose and runs the HTTP smoke test against it, on every push ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)).
 
 What the tests prove:
 
@@ -212,13 +269,18 @@ What the tests prove:
   even with two reviewers at once; no self-review; customers get `403` on the queue.
 - **Rate limiting:** the 4th login from one IP gets `429` even with the right password; a user over the money
   limit gets `429` and no money moves; the in-memory counter loses no increments under 16 threads.
+- **Transaction history:** newest first with the right counterparty and sign on both sides, paging, `404` for
+  someone else's account.
+- **Admin panel:** customers and reviewers get `403`; the overview reports a balanced ledger; the audit log shows
+  who did what and filters by action.
+- **Security:** see the list in [Security](#security).
 - **End-to-end HTTP flow:** register → login → open two accounts → deposit → transfer → replay, plus
   401/404/422/400 cases and a fraud-blocked transfer (`422` with an assessment id).
 
 ## Tech stack
 
 Java 21 · Spring Boot 4.1 (Web MVC, Data JPA, Security, OAuth2 Resource Server, Validation, Actuator) ·
-Hibernate 7 · Flyway · PostgreSQL 16 · Redis 7 · H2 · JUnit 5 · AssertJ · Testcontainers · Gradle (Kotlin DSL) · React 18 · TypeScript · Vite · Vitest · GitHub Actions
+Hibernate 7 · Flyway · PostgreSQL 16 · Redis 7 · H2 · JUnit 5 · AssertJ · Testcontainers · Gradle (Kotlin DSL) · React 18 · TypeScript · Vite · Vitest · Docker · Render · GitHub Actions
 
 ## Licence
 

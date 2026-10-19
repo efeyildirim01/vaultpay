@@ -21,4 +21,8 @@ public interface AccountRepository extends JpaRepository<Account, UUID> {
     Optional<Account> findByIdForUpdate(@Param("id") UUID id);
 
     List<Account> findByOwnerIdOrderByCreatedAtAsc(UUID ownerId);
+
+    long countByType(AccountType type);
+
+    long countByStatus(AccountStatus status);
 }

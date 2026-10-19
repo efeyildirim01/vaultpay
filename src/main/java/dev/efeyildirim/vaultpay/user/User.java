@@ -39,8 +39,8 @@ public class User extends BaseEntity {
         this.role = UserRole.CUSTOMER;
     }
 
-    void promoteToReviewer() {
-        this.role = UserRole.REVIEWER;
+    void changeRole(UserRole role) {
+        this.role = role;
     }
 
     public UserRole getRole() {

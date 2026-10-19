@@ -18,4 +18,12 @@ public interface FraudAssessmentRepository extends JpaRepository<FraudAssessment
               and not exists (select r from FraudReview r where r.assessmentId = a.id)
             order by a.createdAt""")
     List<FraudAssessment> findUnreviewed(@Param("decision") FraudDecision decision, Pageable page);
+
+    @Query("""
+            select count(a) from FraudAssessment a
+            where a.decision = :decision
+              and not exists (select r from FraudReview r where r.assessmentId = a.id)""")
+    long countUnreviewed(@Param("decision") FraudDecision decision);
+
+    long countByDecision(FraudDecision decision);
 }

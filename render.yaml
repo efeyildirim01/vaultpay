@@ -1,0 +1,50 @@
+# Render Blueprint: one Docker web service plus managed PostgreSQL and Key Value (Redis).
+# Deploy: Render dashboard -> New -> Blueprint -> pick this repository.
+databases:
+  - name: vaultpay-db
+    plan: free
+    databaseName: vaultpay
+    user: vaultpay
+
+services:
+  - type: keyvalue
+    name: vaultpay-redis
+    plan: free
+    ipAllowList: [] # reachable only from services inside Render
+
+  - type: web
+    name: vaultpay
+    runtime: docker
+    plan: free
+    healthCheckPath: /actuator/health
+    envVars:
+      - key: DB_HOST
+        fromDatabase:
+          name: vaultpay-db
+          property: host
+      - key: DB_PORT
+        fromDatabase:
+          name: vaultpay-db
+          property: port
+      - key: DB_NAME
+        fromDatabase:
+          name: vaultpay-db
+          property: database
+      - key: DATABASE_USERNAME
+        fromDatabase:
+          name: vaultpay-db
+          property: user
+      - key: DATABASE_PASSWORD
+        fromDatabase:
+          name: vaultpay-db
+          property: password
+      - key: REDIS_URL
+        fromService:
+          type: keyvalue
+          name: vaultpay-redis
+          property: connectionString
+      - key: VAULTPAY_JWT_SECRET
+        generateValue: true
+      # Optional: set in the dashboard to create the reviewer/admin demo accounts.
+      - key: VAULTPAY_STAFF_PASSWORD
+        sync: false

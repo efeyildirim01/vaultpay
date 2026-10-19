@@ -1,8 +1,11 @@
 package dev.efeyildirim.vaultpay.account;
 
 import dev.efeyildirim.vaultpay.account.AccountService.AccountView;
+import dev.efeyildirim.vaultpay.account.AccountService.TransactionPage;
 import dev.efeyildirim.vaultpay.auth.CurrentUser;
 import jakarta.validation.Valid;
+import jakarta.validation.constraints.Max;
+import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
@@ -16,6 +19,7 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 
@@ -48,5 +52,12 @@ public class AccountController {
     @GetMapping("/{accountId}")
     public AccountView get(@AuthenticationPrincipal Jwt jwt, @PathVariable UUID accountId) {
         return accountService.get(CurrentUser.id(jwt), accountId);
+    }
+
+    @GetMapping("/{accountId}/transactions")
+    public TransactionPage transactions(@AuthenticationPrincipal Jwt jwt, @PathVariable UUID accountId,
+                                        @RequestParam(defaultValue = "0") @Min(0) int page,
+                                        @RequestParam(defaultValue = "20") @Min(1) @Max(100) int size) {
+        return accountService.history(CurrentUser.id(jwt), accountId, page, size);
     }
 }

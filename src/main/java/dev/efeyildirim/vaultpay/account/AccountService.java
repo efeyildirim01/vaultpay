@@ -3,6 +3,8 @@ package dev.efeyildirim.vaultpay.account;
 import dev.efeyildirim.vaultpay.audit.AuditService;
 import dev.efeyildirim.vaultpay.common.BusinessRuleException;
 import dev.efeyildirim.vaultpay.common.NotFoundException;
+import dev.efeyildirim.vaultpay.ledger.JournalEntryType;
+import dev.efeyildirim.vaultpay.ledger.LedgerLine;
 import dev.efeyildirim.vaultpay.ledger.LedgerService;
 import java.time.Clock;
 import java.time.Instant;
@@ -12,6 +14,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Stream;
+import org.springframework.data.domain.Slice;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
@@ -53,6 +56,34 @@ public class AccountService {
         return accounts.findByOwnerIdOrderByCreatedAtAsc(ownerId).stream()
                 .map(a -> view(a, ledger.balanceOf(a.getId())))
                 .toList();
+    }
+
+    /** One row of an account statement, as the customer sees it. */
+    public record TransactionView(UUID journalEntryId, JournalEntryType type, long amountMinor, String currency,
+                                  UUID counterpartyAccountId, String counterpartyLabel, String reference,
+                                  Instant createdAt) {
+    }
+
+    public record TransactionPage(List<TransactionView> items, int page, int size, boolean hasMore) {
+    }
+
+    @Transactional(readOnly = true)
+    public TransactionPage history(UUID ownerId, UUID accountId, int page, int size) {
+        accounts.findById(accountId)
+                .filter(a -> a.isOwnedBy(ownerId))
+                .orElseThrow(() -> new NotFoundException("Account not found"));
+        // A Slice fetches one row more than the page size to know whether another page exists,
+        // which is cheaper than a COUNT(*) over the account's whole history.
+        Slice<LedgerLine> lines = ledger.statement(accountId, page, size);
+        List<TransactionView> items = lines.stream().map(AccountService::toView).toList();
+        return new TransactionPage(items, page, size, lines.hasNext());
+    }
+
+    private static TransactionView toView(LedgerLine line) {
+        String label = Account.EXTERNAL_FUNDING_ID.equals(line.counterpartyAccountId())
+                ? "External funding (simulated)" : null;
+        return new TransactionView(line.journalEntryId(), line.type(), line.amountMinor(), line.currency(),
+                line.counterpartyAccountId(), label, line.reference(), line.createdAt());
     }
 
     @Transactional(readOnly = true)

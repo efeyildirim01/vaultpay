@@ -16,6 +16,7 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.oauth2.jose.jws.MacAlgorithm;
 import org.springframework.security.oauth2.jwt.JwtDecoder;
 import org.springframework.security.oauth2.jwt.JwtEncoder;
+import org.springframework.security.oauth2.jwt.JwtValidators;
 import org.springframework.security.oauth2.jwt.NimbusJwtDecoder;
 import org.springframework.security.oauth2.jwt.NimbusJwtEncoder;
 import org.springframework.security.web.SecurityFilterChain;
@@ -33,7 +34,10 @@ public class SecurityConfig {
                         .requestMatchers(HttpMethod.POST, "/api/auth/register", "/api/auth/login").permitAll()
                         .requestMatchers("/actuator/health").permitAll()
                         .requestMatchers("/api/fraud/**").hasAuthority("SCOPE_" + TokenService.REVIEW_SCOPE)
-                        .anyRequest().authenticated())
+                        .requestMatchers("/api/admin/**").hasAuthority("SCOPE_" + TokenService.AUDIT_SCOPE)
+                        .requestMatchers("/api/**", "/actuator/**").authenticated()
+                        // Everything else is the static React dashboard bundled into the jar (see Dockerfile).
+                        .anyRequest().permitAll())
                 .oauth2ResourceServer(oauth2 -> oauth2.jwt(Customizer.withDefaults()));
         return http.build();
     }
@@ -60,6 +64,9 @@ public class SecurityConfig {
 
     @Bean
     JwtDecoder jwtDecoder(SecretKey jwtSigningKey) {
-        return NimbusJwtDecoder.withSecretKey(jwtSigningKey).macAlgorithm(MacAlgorithm.HS256).build();
+        NimbusJwtDecoder decoder = NimbusJwtDecoder.withSecretKey(jwtSigningKey).macAlgorithm(MacAlgorithm.HS256).build();
+        // Default validators check exp/nbf; also insist the token was issued by VaultPay itself.
+        decoder.setJwtValidator(JwtValidators.createDefaultWithIssuer(TokenService.ISSUER));
+        return decoder;
     }
 }

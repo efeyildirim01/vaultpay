@@ -76,3 +76,13 @@ code.id { font-size: 12px; color: var(--muted); word-break: break-all; }
 .error { color: var(--error); font-size: 14px; margin: 0; }
 .ok { color: var(--ok); font-size: 14px; margin: 0; }
 .nowrap { white-space: nowrap; }
+
+.row { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.row h2 { margin: 0; }
+.filter { display: flex; align-items: center; gap: 8px; font-size: 14px; color: var(--muted); }
+.stats { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 12px; margin-top: 12px; }
+.stat { display: flex; flex-direction: column; gap: 4px; padding: 12px; border: 1px solid var(--border); border-radius: 10px; }
+.stat strong { font-size: 20px; font-variant-numeric: tabular-nums; }
+.num.in, strong.ok { color: var(--ok); }
+strong.error { color: var(--error); }
+.details { font-family: ui-monospace, monospace; font-size: 12px; word-break: break-all; min-width: 260px; }

@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { tokenClaims } from './api';
 import { AccountsPage } from './AccountsPage';
 import { LoginPage } from './LoginPage';
+import { AdminPage } from './AdminPage';
 import { ReviewPage } from './ReviewPage';
 
 const TOKEN_KEY = 'vaultpay.token';
@@ -20,7 +21,7 @@ function loadToken(): string | null {
 
 export function App() {
   const [token, setToken] = useState<string | null>(loadToken);
-  const [tab, setTab] = useState<'accounts' | 'review'>('accounts');
+  const [tab, setTab] = useState<'accounts' | 'review' | 'admin'>('accounts');
 
   const signIn = (t: string) => {
     try { sessionStorage.setItem(TOKEN_KEY, t); } catch { /* in-memory only */ }
@@ -41,7 +42,9 @@ export function App() {
   }
 
   const claims = tokenClaims(token);
-  const isReviewer = (claims.scope ?? '').split(' ').includes('fraud:review');
+  const scopes = (claims.scope ?? '').split(' ');
+  const isReviewer = scopes.includes('fraud:review');
+  const isAdmin = scopes.includes('audit:read');
 
   return (
     <Shell>
@@ -54,12 +57,18 @@ export function App() {
             Fraud review
           </button>
         )}
+        {isAdmin && (
+          <button className={tab === 'admin' ? 'tab active' : 'tab'} onClick={() => setTab('admin')}>
+            Admin
+          </button>
+        )}
         <span className="spacer" />
         <span className="muted">{claims.email}</span>
         <button className="link" onClick={signOut}>Sign out</button>
       </nav>
-      {tab === 'accounts' ? <AccountsPage token={token} onExpired={signOut} />
-                          : <ReviewPage token={token} onExpired={signOut} />}
+      {tab === 'accounts' && <AccountsPage token={token} onExpired={signOut} />}
+      {tab === 'review' && <ReviewPage token={token} onExpired={signOut} />}
+      {tab === 'admin' && <AdminPage token={token} onExpired={signOut} />}
     </Shell>
   );
 }
