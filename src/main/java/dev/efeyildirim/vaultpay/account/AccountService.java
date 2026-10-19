@@ -76,6 +76,19 @@ public class AccountService {
         return locked;
     }
 
+    /**
+     * Freezes a customer account. Takes the same row lock as transfers, so a transfer that is already
+     * running finishes first and every later one sees the frozen status.
+     */
+    @Transactional(propagation = Propagation.MANDATORY)
+    public void freeze(UUID actorId, UUID accountId, String reason) {
+        Account account = lockInOrder(accountId).get(accountId);
+        if (account.getStatus() == AccountStatus.ACTIVE) {
+            account.freeze();
+            audit.record(actorId, "ACCOUNT_FROZEN", "ACCOUNT", accountId, reason);
+        }
+    }
+
     private static AccountView view(Account a, long balanceMinor) {
         return new AccountView(a.getId(), a.getName(), a.getCurrency(), a.getStatus(), balanceMinor, a.getCreatedAt());
     }

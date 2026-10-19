@@ -7,6 +7,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.jayway.jsonpath.JsonPath;
+import dev.efeyildirim.vaultpay.user.UserRepository;
+import java.util.List;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -21,6 +23,8 @@ class ApiFlowTest extends IntegrationTest {
 
     @Autowired
     MockMvc mvc;
+    @Autowired
+    UserRepository userRepository;
 
     @Test
     void registerLoginOpenAccountsDepositAndTransfer() throws Exception {
@@ -86,6 +90,44 @@ class ApiFlowTest extends IntegrationTest {
     }
 
     @Test
+    void reviewQueueIsForReviewersOnlyAndConfirmedFraudFreezesTheAccount() throws Exception {
+        String aliceToken = registerAndLogin();
+        String bobToken = registerAndLogin();
+        String alice = openAccountOverHttp(aliceToken, "Alice");
+        String bob = openAccountOverHttp(bobToken, "Bob");
+        postJson("/api/accounts/" + alice + "/deposits", aliceToken, newKey(), "{\"amountMinor\": 10000}")
+                .andExpect(status().isCreated());
+        // £60 of a fresh £100 deposit to a new payee: scored REVIEW, so it still goes through.
+        String journalId = JsonPath.read(postJson("/api/transfers", aliceToken, newKey(), """
+                        {"fromAccountId": "%s", "toAccountId": "%s", "amountMinor": 6000}""".formatted(alice, bob))
+                .andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString(), "$.journalEntryId");
+
+        mvc.perform(get("/api/fraud/reviews/pending").header("Authorization", "Bearer " + aliceToken))
+                .andExpect(status().isForbidden());
+
+        String reviewer = reviewerToken();
+        String pending = mvc.perform(get("/api/fraud/reviews/pending").header("Authorization", "Bearer " + reviewer))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString();
+        List<String> ids = JsonPath.read(pending,
+                "$[?(@.journalEntryId == '" + journalId + "')].assessmentId");
+        String assessmentId = ids.getFirst();
+
+        postJson("/api/fraud/assessments/" + assessmentId + "/review", reviewer, newKey(),
+                "{\"outcome\": \"CONFIRMED_FRAUD\", \"note\": \"mule account\"}")
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.accountFrozen").value(true));
+
+        mvc.perform(get("/api/accounts/" + alice).header("Authorization", "Bearer " + aliceToken))
+                .andExpect(jsonPath("$.status").value("FROZEN"));
+        postJson("/api/transfers", aliceToken, newKey(), """
+                {"fromAccountId": "%s", "toAccountId": "%s", "amountMinor": 100}""".formatted(alice, bob))
+                .andExpect(status().isUnprocessableEntity())
+                .andExpect(jsonPath("$.detail").value("Account is not active"));
+    }
+
+    @Test
     void requestsWithoutTokenAreRejected() throws Exception {
         mvc.perform(get("/api/accounts")).andExpect(status().isUnauthorized());
         mvc.perform(post("/api/transfers").contentType(MediaType.APPLICATION_JSON).content("{}"))
@@ -128,6 +170,18 @@ class ApiFlowTest extends IntegrationTest {
     private String registerAndLogin() throws Exception {
         String email = "user-" + UUID.randomUUID() + "@example.com";
         register(email);
+        return login(email);
+    }
+
+    /** Reviewers have no sign-up endpoint: register normally, promote in the service, then log in. */
+    private String reviewerToken() throws Exception {
+        String email = "reviewer-" + UUID.randomUUID() + "@example.com";
+        register(email);
+        userService.promoteToReviewer(null, userRepository.findByEmail(email).orElseThrow().getId());
+        return login(email);
+    }
+
+    private String login(String email) throws Exception {
         String body = mvc.perform(post("/api/auth/login").contentType(MediaType.APPLICATION_JSON)
                         .content("{\"email\": \"%s\", \"password\": \"correct-horse-battery\"}".formatted(email)))
                 .andExpect(status().isOk())

@@ -62,6 +62,11 @@ public class Account extends BaseEntity {
         return status == AccountStatus.ACTIVE;
     }
 
+    /** Transfers out of, into and deposits to a frozen account are rejected (see PaymentService). */
+    void freeze() {
+        this.status = AccountStatus.FROZEN;
+    }
+
     public boolean mayGoNegative() {
         return type == AccountType.SYSTEM;
     }

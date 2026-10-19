@@ -2,8 +2,10 @@ package dev.efeyildirim.vaultpay.user;
 
 import dev.efeyildirim.vaultpay.audit.AuditService;
 import dev.efeyildirim.vaultpay.common.ConflictException;
+import dev.efeyildirim.vaultpay.common.NotFoundException;
 import java.time.Clock;
 import java.util.Locale;
+import java.util.UUID;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
@@ -39,6 +41,17 @@ public class UserService {
         }
         audit.record(user.getId(), "USER_REGISTERED", "USER", user.getId(), null);
         return user;
+    }
+
+    /**
+     * Not exposed over HTTP: in this simulator reviewers are created by tests and by the dev-profile
+     * bootstrap. The new role reaches the user's token at their next login.
+     */
+    @Transactional
+    public void promoteToReviewer(UUID actorId, UUID userId) {
+        User user = users.findById(userId).orElseThrow(() -> new NotFoundException("User not found"));
+        user.promoteToReviewer();
+        audit.record(actorId, "ROLE_GRANTED", "USER", userId, "role=" + UserRole.REVIEWER);
     }
 
     public static String normaliseEmail(String email) {

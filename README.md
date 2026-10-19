@@ -20,7 +20,7 @@ a double-entry ledger, ACID money movement, concurrency safety, idempotent APIs 
 | Audit log written atomically with each change | Built |
 | Flyway migrations, PostgreSQL in production/CI, H2 for local dev | Built |
 | Rule-based fraud scoring on transfers (4 explainable rules, 0-100 score, ALLOW / REVIEW / BLOCK) | Built and tested |
-| Review queue / case handling for REVIEW decisions | Planned (REVIEW is recorded, nobody works it yet) |
+| Fraud review queue: reviewer role, four-eyes rule, confirmed fraud freezes the account | Built and tested |
 | Redis rate limiting | Planned |
 | Web dashboard (React / Next.js) | Planned |
 
@@ -35,7 +35,7 @@ account   accounts, row locking (SELECT ... FOR UPDATE in id order)
 ledger    journal entries + postings; the only code allowed to write money movements
 payment   deposits and transfers, idempotency handling
 audit     append-only audit log, joined to the caller's transaction
-fraud     rule-based transfer scoring; pure rules over facts read from the ledger
+fraud     rule-based transfer scoring; pure rules over facts read from the ledger; reviewer queue
 ```
 
 ### Data model
@@ -43,7 +43,7 @@ fraud     rule-based transfer scoring; pure rules over facts read from the ledge
 ```
 users ──< accounts ──< postings >── journal_entries
                                         │
-                 audit_log, fraud_assessments
+                 audit_log, fraud_assessments ──< fraud_reviews
 ```
 
 - **`accounts` has no balance column.** A balance is always `SUM(postings.amount_minor)` for that account,
@@ -97,8 +97,25 @@ No single rule can block on its own; e.g. "£2,000 deposited, £1,900 sent at on
 - The client gets `422` with an `assessmentId`, but not the reasons: telling a fraudster which rule fired
   shows them how to stay under it.
 
-Limits, honestly: thresholds are hard-coded constants, not tuned on real data; there is no machine learning,
-no device/IP signals and no review workflow yet. A retried blocked request is scored (and recorded) again.
+### Fraud review
+
+`REVIEW` transfers go through, then land in a queue for users with the `REVIEWER` role
+(their JWT carries the `fraud:review` scope; everything under `/api/fraud` requires it, others get `403`).
+
+- A reviewer marks an assessment `CLEARED` or `CONFIRMED_FRAUD`. Confirmed fraud **freezes the account the
+  money left from**, under the same row lock transfers use, so no later transfer or deposit gets through.
+- **Four-eyes rule:** a reviewer cannot review their own transfer.
+- Decisions go to an append-only `fraud_reviews` table instead of overwriting the assessment, so the automated
+  decision and the human one are both kept. `UNIQUE (assessment_id)` means two reviewers deciding at the same
+  moment cannot both win: the loser gets `409` (tested with two concurrent reviewers).
+- The `dev` profile creates `reviewer@vaultpay.local` / `dev-reviewer-password` at startup so the queue can be
+  tried locally. There is no endpoint that grants the role.
+
+Limits, honestly: thresholds are hard-coded constants, not tuned on real data; there is no machine learning and
+no device/IP signals. Confirmed fraud only freezes the account: money is not clawed back, and there is no unfreeze
+flow yet. `BLOCK` decisions are recorded but not queued. A new role reaches a token only at the next login, and a
+removed role stays in already-issued tokens until they expire (30 minutes). A retried blocked request is scored
+(and recorded) again.
 
 ## API
 
@@ -111,6 +128,8 @@ no device/IP signals and no review workflow yet. A retried blocked request is sc
 | `GET` | `/api/accounts/{id}` | one account with its balance |
 | `POST` | `/api/accounts/{id}/deposits` | simulated deposit, needs `Idempotency-Key` |
 | `POST` | `/api/transfers` | `{fromAccountId, toAccountId, amountMinor, reference}`, needs `Idempotency-Key` |
+| `GET` | `/api/fraud/reviews/pending` | reviewers only: unreviewed `REVIEW` assessments with reasons and transfer details |
+| `POST` | `/api/fraud/assessments/{id}/review` | reviewers only: `{outcome: CLEARED \| CONFIRMED_FRAUD, note}` |
 
 Errors use RFC 9457 problem details (`application/problem+json`). Accounts belonging to other users
 return `404`, so account ids cannot be probed.
@@ -145,6 +164,8 @@ What the tests prove:
 - **Ledger invariant:** after every test, every journal entry sums to zero and so does the whole ledger.
 - **Fraud rules:** each rule has unit tests at its boundaries; integration tests show a blocked transfer
   moves no money while its assessment survives the rollback, and that a known payee lowers the next score.
+- **Fraud review:** confirmed fraud freezes the account and stops the next transfer; one review per assessment,
+  even with two reviewers at once; no self-review; customers get `403` on the queue.
 - **End-to-end HTTP flow:** register → login → open two accounts → deposit → transfer → replay, plus
   401/404/422/400 cases and a fraud-blocked transfer (`422` with an assessment id).
 
