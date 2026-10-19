@@ -22,7 +22,7 @@ a double-entry ledger, ACID money movement, concurrency safety, idempotent APIs 
 | Rule-based fraud scoring on transfers (4 explainable rules, 0-100 score, ALLOW / REVIEW / BLOCK) | Built and tested |
 | Fraud review queue: reviewer role, four-eyes rule, confirmed fraud freezes the account | Built and tested |
 | Rate limiting: login per IP, money movement per user; Redis in production, in-memory locally | Built and tested (Redis store tested in CI only) |
-| Web dashboard (React / Next.js) | Planned |
+| Web dashboard (React + TypeScript + Vite): accounts, deposits, transfers, fraud review queue | Built (unit tests for money parsing; UI flows checked by hand) |
 
 ## Architecture
 
@@ -156,6 +156,20 @@ so nothing is posted. The login limit counts wrong passwords too, which is what 
 Errors use RFC 9457 problem details (`application/problem+json`). Accounts belonging to other users
 return `404`, so account ids cannot be probed.
 
+## Web dashboard
+
+[`web/`](web) is a small React + TypeScript single-page app built with Vite. It talks only to the REST API above.
+
+- **Customers:** sign up / sign in, open accounts, see balances, make simulated deposits and transfers.
+  Fraud blocks (`422`), frozen accounts and rate limits (`429`, with the wait time) are shown as messages.
+- **Reviewers:** a *Fraud review* tab (shown only when the token has the `fraud:review` scope) lists the queue
+  with score and reasons, and has *Clear* / *Confirm fraud* buttons. The server still checks the scope on every call.
+- **Idempotency from the UI:** each form keeps one `Idempotency-Key` until its content changes or the request
+  succeeds, so pressing *Send* again after a timeout retries the same request instead of sending money twice.
+- **Money input** is parsed as text into integer pence (`"12.30"` → `1230`), never through floating point.
+- The token is kept in `sessionStorage` (survives a refresh, not closing the tab). Any script on the page could
+  read it; an HttpOnly cookie would avoid that, and is the obvious next step for a real deployment.
+
 ## Running locally
 
 Requirements: JDK 21. No database or Docker needed: the `dev` profile uses in-memory H2 in PostgreSQL mode.
@@ -164,7 +178,15 @@ Requirements: JDK 21. No database or Docker needed: the `dev` profile uses in-me
 ./gradlew bootRun
 ```
 
-On Windows use `gradlew.bat bootRun`.
+On Windows use `gradlew.bat bootRun`. Then, for the dashboard (needs Node 20+):
+
+```bash
+cd web
+npm install
+npm run dev        # http://localhost:5173, forwards /api to the backend on :8080
+```
+
+The `dev` profile creates a reviewer account, `reviewer@vaultpay.local` / `dev-reviewer-password`.
 
 ## Tests
 
@@ -173,7 +195,7 @@ On Windows use `gradlew.bat bootRun`.
 ./gradlew test -PtestDb=postgres # same suite on real PostgreSQL 16 + Redis 7 via Testcontainers (needs Docker)
 ```
 
-CI runs both variants on every push ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)).
+CI runs both variants, plus the dashboard's unit tests and type-checked build, on every push ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)).
 
 What the tests prove:
 
@@ -196,7 +218,7 @@ What the tests prove:
 ## Tech stack
 
 Java 21 · Spring Boot 4.1 (Web MVC, Data JPA, Security, OAuth2 Resource Server, Validation, Actuator) ·
-Hibernate 7 · Flyway · PostgreSQL 16 · Redis 7 · H2 · JUnit 5 · AssertJ · Testcontainers · Gradle (Kotlin DSL) · GitHub Actions
+Hibernate 7 · Flyway · PostgreSQL 16 · Redis 7 · H2 · JUnit 5 · AssertJ · Testcontainers · Gradle (Kotlin DSL) · React 18 · TypeScript · Vite · Vitest · GitHub Actions
 
 ## Licence
 
