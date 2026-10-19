@@ -21,7 +21,7 @@ a double-entry ledger, ACID money movement, concurrency safety, idempotent APIs 
 | Flyway migrations, PostgreSQL in production/CI, H2 for local dev | Built |
 | Rule-based fraud scoring on transfers (4 explainable rules, 0-100 score, ALLOW / REVIEW / BLOCK) | Built and tested |
 | Fraud review queue: reviewer role, four-eyes rule, confirmed fraud freezes the account | Built and tested |
-| Redis rate limiting | Planned |
+| Rate limiting: login per IP, money movement per user; Redis in production, in-memory locally | Built and tested (Redis store tested in CI only) |
 | Web dashboard (React / Next.js) | Planned |
 
 ## Architecture
@@ -36,6 +36,7 @@ ledger    journal entries + postings; the only code allowed to write money movem
 payment   deposits and transfers, idempotency handling
 audit     append-only audit log, joined to the caller's transaction
 fraud     rule-based transfer scoring; pure rules over facts read from the ledger; reviewer queue
+ratelimit fixed-window limits on login and money movement (Redis or in-memory counters)
 ```
 
 ### Data model
@@ -117,6 +118,27 @@ flow yet. `BLOCK` decisions are recorded but not queued. A new role reaches a to
 removed role stays in already-issued tokens until they expire (30 minutes). A retried blocked request is scored
 (and recorded) again.
 
+### Rate limiting
+
+| Limit | Key | Default |
+|---|---|---|
+| `POST /api/auth/login` | client IP | 10 per minute |
+| `POST` deposits and transfers | user id from the verified JWT | 30 per minute |
+
+Over the limit → `429 Too Many Requests` with a `Retry-After` header, before the request reaches the controller,
+so nothing is posted. The login limit counts wrong passwords too, which is what slows down password guessing.
+
+- **Fixed window:** the counter key contains the window number (`rl:money:<user>:<minute>`), so each window
+  starts at zero and old counters expire on their own. Trade-off: up to 2× the limit can get through around a
+  window boundary; a sliding window would fix that with more state per key.
+- **Redis in production** so every instance shares one count. `INCR` and `PEXPIRE` run in one Lua script, so a
+  counter can never be left without an expiry. Locally (`dev`, H2 tests) the counters live in memory, so no
+  Redis is needed; CI runs the Redis store against a real Redis container.
+- **Fail open:** if Redis is unreachable, requests are allowed and a warning is logged. The limiter is
+  protection, not correctness: overdrafts and double posting are still prevented by locks and idempotency.
+- The client IP is `getRemoteAddr()`. Behind a load balancer this must be switched to a header set by a
+  trusted proxy; `X-Forwarded-For` from the client is not trusted.
+
 ## API
 
 | Method | Path | Notes |
@@ -148,7 +170,7 @@ On Windows use `gradlew.bat bootRun`.
 
 ```bash
 ./gradlew test                   # H2, no Docker needed
-./gradlew test -PtestDb=postgres # same suite on real PostgreSQL 16 via Testcontainers (needs Docker)
+./gradlew test -PtestDb=postgres # same suite on real PostgreSQL 16 + Redis 7 via Testcontainers (needs Docker)
 ```
 
 CI runs both variants on every push ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)).
@@ -166,13 +188,15 @@ What the tests prove:
   moves no money while its assessment survives the rollback, and that a known payee lowers the next score.
 - **Fraud review:** confirmed fraud freezes the account and stops the next transfer; one review per assessment,
   even with two reviewers at once; no self-review; customers get `403` on the queue.
+- **Rate limiting:** the 4th login from one IP gets `429` even with the right password; a user over the money
+  limit gets `429` and no money moves; the in-memory counter loses no increments under 16 threads.
 - **End-to-end HTTP flow:** register → login → open two accounts → deposit → transfer → replay, plus
   401/404/422/400 cases and a fraud-blocked transfer (`422` with an assessment id).
 
 ## Tech stack
 
 Java 21 · Spring Boot 4.1 (Web MVC, Data JPA, Security, OAuth2 Resource Server, Validation, Actuator) ·
-Hibernate 7 · Flyway · PostgreSQL 16 · H2 · JUnit 5 · AssertJ · Testcontainers · Gradle (Kotlin DSL) · GitHub Actions
+Hibernate 7 · Flyway · PostgreSQL 16 · Redis 7 · H2 · JUnit 5 · AssertJ · Testcontainers · Gradle (Kotlin DSL) · GitHub Actions
 
 ## Licence
 

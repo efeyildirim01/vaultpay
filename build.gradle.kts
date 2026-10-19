@@ -21,6 +21,7 @@ repositories {
 dependencies {
 	implementation("org.springframework.boot:spring-boot-starter-actuator")
 	implementation("org.springframework.boot:spring-boot-starter-data-jpa")
+	implementation("org.springframework.boot:spring-boot-starter-data-redis")
 	implementation("org.springframework.boot:spring-boot-starter-flyway")
 	implementation("org.springframework.boot:spring-boot-starter-security")
 	implementation("org.springframework.boot:spring-boot-starter-security-oauth2-resource-server")
@@ -45,7 +46,7 @@ tasks.withType<Test> {
 	useJUnitPlatform()
 	// Tests run against H2 by default (no Docker needed locally).
 	// `./gradlew test -PtestDb=postgres` runs the same suite against a real
-	// PostgreSQL started by Testcontainers (this is what CI does).
+	// PostgreSQL and Redis started by Testcontainers (this is what CI does).
 	val testDb = (project.findProperty("testDb") as String?) ?: "h2"
 	systemProperty("spring.profiles.active", "test,test-$testDb")
 	testLogging {
